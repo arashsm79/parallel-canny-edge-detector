@@ -40,5 +40,5 @@ void canny_edge_detect_wrapper(string input_image_path,
   double run_time = omp_get_wtime() - start_time;
   cout << run_time * 1000 <<  endl;
 
-  cv::imwrite(output_image_path + "cannyedge.jpg", canny_image);
+  cv::imwrite(output_image_path, canny_image);
 }
