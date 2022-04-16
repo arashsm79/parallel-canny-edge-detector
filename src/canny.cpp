@@ -9,7 +9,6 @@ using namespace std;
 void canny_edge_detect(const uint8_t *input_image, int height, int width,
                        int high_threshold, int low_threshold,
                        uint8_t *output_image) {
-  omp_set_num_threads(16);
 
   uint64_t image_size = height * width;
 
