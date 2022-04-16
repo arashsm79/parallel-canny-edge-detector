@@ -1,10 +1,8 @@
-#define _USE_MATH_DEFINES
 #include "canny.h"
 #include "omp.h"
 #include "opencv4/opencv2/core/core.hpp"
 #include "opencv4/opencv2/highgui/highgui.hpp"
 #include "opencv4/opencv2/imgproc/imgproc.hpp"
-#include <cmath>
 #include <iostream>
 
 using namespace std;

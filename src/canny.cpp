@@ -1,6 +1,5 @@
 #include "canny.h"
 #include "omp.h"
-#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <math.h>
