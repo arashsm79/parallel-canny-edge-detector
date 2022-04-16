@@ -120,7 +120,8 @@ void non_max_suppression(double *gradient_magnitude,
       int pixel_index = col + (row * width);
 
       // unconditionally suppress border pixels
-      if(row == OFFSET || col == OFFSET || col == width - OFFSET - 1 || row == height - OFFSET - 1) {
+      if (row == OFFSET || col == OFFSET || col == width - OFFSET - 1 ||
+          row == height - OFFSET - 1) {
         output_image[pixel_index] = 0;
         continue;
       }
@@ -183,15 +184,15 @@ void hysteresis(uint8_t *input_image, int height, int width,
   for (int col = OFFSET; col < width - OFFSET; col++) {
     for (int row = OFFSET; row < height - OFFSET; row++) {
       int pixel_index = col + (row * width);
-      if (input_image[pixel_index] == 100) {
-        if (input_image[pixel_index - 1] == 255 ||
-            input_image[pixel_index + 1] == 255 ||
-            input_image[pixel_index - width] == 255 ||
-            input_image[pixel_index + width] == 255 ||
-            input_image[pixel_index - width - 1] == 255 ||
-            input_image[pixel_index - width + 1] == 255 ||
-            input_image[pixel_index + width - 1] == 255 ||
-            input_image[pixel_index + width + 1] == 255)
+      if (output_image[pixel_index] == 100) {
+        if (output_image[pixel_index - 1] == 255 ||
+            output_image[pixel_index + 1] == 255 ||
+            output_image[pixel_index - width] == 255 ||
+            output_image[pixel_index + width] == 255 ||
+            output_image[pixel_index - width - 1] == 255 ||
+            output_image[pixel_index - width + 1] == 255 ||
+            output_image[pixel_index + width - 1] == 255 ||
+            output_image[pixel_index + width + 1] == 255)
           output_image[pixel_index] = 255;
         else
           output_image[pixel_index] = 0;
