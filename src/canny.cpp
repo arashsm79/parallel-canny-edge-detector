@@ -39,23 +39,20 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
 void gaussian_blur(const uint8_t *input_image, int height, int width,
                    uint8_t *output_image) {
 
-  const double kernel[9] = {1/16.0, 2/16.0, 1/16.0, 2/16.0, 4/16.0, 2/16.0, 1/16.0, 2/16.0, 1/16.0};
-  const int kernel_size = 3;
-  const int offset = ((kernel_size - 1) / 2);
+  const double kernel[9] = {1, 2, 1, 2, 4, 2, 1, 2, 1};
+  const int kernel_sum = 16;
 
 #pragma omp parallel for
-  for (int col = offset; col < width - offset; col++) {
-    for (int row = offset; row < height - offset; row++) {
-      double kernel_sum = 0;
+  for (int col = OFFSET; col < width - OFFSET; col++) {
+    for (int row = OFFSET; row < height - OFFSET; row++) {
       double output_intensity = 0;
       int kernel_index = 0;
       int pixel_index = col + (row * width);
-      for (int kcol = -offset; kcol <= offset; kcol++) {
-        for (int krow = -offset; krow <= offset; krow++) {
+      for (int krow = -OFFSET; krow <= OFFSET; krow++) {
+        for (int kcol = -OFFSET; kcol <= OFFSET; kcol++) {
           output_intensity +=
               input_image[pixel_index + (kcol + (krow * width))] *
               kernel[kernel_index];
-          kernel_sum += kernel[kernel_index];
           kernel_index++;
         }
       }
@@ -69,21 +66,20 @@ void gradient_magnitude_direction(const uint8_t *input_image, int height,
                                   uint8_t *direction) {
   const int8_t Gx[] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
   const int8_t Gy[] = {1, 2, 1, 0, 0, 0, -1, -2, -1};
-  const int offset = 1;
 
 #pragma omp parallel for
-  for (int col = offset; col < width - offset; col++) {
-    for (int row = offset; row < height - offset; row++) {
+  for (int col = OFFSET; col < width - OFFSET; col++) {
+    for (int row = OFFSET; row < height - OFFSET; row++) {
       double grad_x_sum = 0.0;
       double grad_y_sum = 0.0;
       int kernel_index = 0;
       int pixel_index = col + (row * width);
 
-      for (int kcol = -offset; kcol <= offset; kcol++) {
-        for (int krow = -offset; krow <= offset; krow++) {
-          grad_x_sum += input_image[pixel_index + (krow + (kcol * width))] *
+      for (int krow = -OFFSET; krow <= OFFSET; krow++) {
+        for (int kcol = -OFFSET; kcol <= OFFSET; kcol++) {
+          grad_x_sum += input_image[pixel_index + (kcol + (krow * width))] *
                         Gx[kernel_index];
-          grad_y_sum += input_image[pixel_index + (krow + (kcol * width))] *
+          grad_y_sum += input_image[pixel_index + (kcol + (krow * width))] *
                         Gy[kernel_index];
           kernel_index++;
         }
@@ -122,11 +118,16 @@ void non_max_suppression(double *gradient_magnitude,
                          uint8_t *gradient_direction, int height, int width,
                          double *output_image) {
   memcpy(output_image, gradient_magnitude, width * height * sizeof(double));
-  const int offset = 1;
 #pragma omp parallel for
-  for (int col = offset; col < width - offset; col++) {
-    for (int row = offset; row < height - offset; row++) {
+  for (int col = OFFSET; col < width - OFFSET; col++) {
+    for (int row = OFFSET; row < height - OFFSET; row++) {
       int pixel_index = col + (row * width);
+
+      // unconditionally suppress border pixels
+      if(row == OFFSET || col == OFFSET || col == width - OFFSET - 1 || row == height - OFFSET - 1) {
+        output_image[pixel_index] = 0;
+        continue;
+      }
 
       switch (gradient_direction[pixel_index]) {
       case 1:
@@ -184,10 +185,9 @@ void thresholding(double *suppressed_image, int height, int width,
 void hysteresis(uint8_t *input_image, int height, int width,
                 uint8_t *output_image) {
   memcpy(output_image, input_image, width * height * sizeof(uint8_t));
-  const int offset = 1;
 #pragma omp parallel for
-  for (int col = offset; col < width - offset; col++) {
-    for (int row = offset; row < height - offset; row++) {
+  for (int col = OFFSET; col < width - OFFSET; col++) {
+    for (int row = OFFSET; row < height - OFFSET; row++) {
       int pixel_index = col + (row * width);
       if (input_image[pixel_index] == 100) {
         if (input_image[pixel_index - 1] == 255 ||
