@@ -184,19 +184,18 @@ void thresholding(double *suppressed_image, int height, int width,
 void hysteresis(uint8_t *input_image, int height, int width,
                 uint8_t *output_image) {
   memcpy(output_image, input_image, width * height * sizeof(uint8_t));
-#pragma omp parallel for
   for (int col = OFFSET; col < width - OFFSET; col++) {
     for (int row = OFFSET; row < height - OFFSET; row++) {
       int pixel_index = col + (row * width);
-      if (input_image[pixel_index] == 100) {
-        if (input_image[pixel_index - 1] == 255 ||
-            input_image[pixel_index + 1] == 255 ||
-            input_image[pixel_index - width] == 255 ||
-            input_image[pixel_index + width] == 255 ||
-            input_image[pixel_index - width - 1] == 255 ||
-            input_image[pixel_index - width + 1] == 255 ||
-            input_image[pixel_index + width - 1] == 255 ||
-            input_image[pixel_index + width + 1] == 255)
+      if (output_image[pixel_index] == 100) {
+        if (output_image[pixel_index - 1] == 255 ||
+            output_image[pixel_index + 1] == 255 ||
+            output_image[pixel_index - width] == 255 ||
+            output_image[pixel_index + width] == 255 ||
+            output_image[pixel_index - width - 1] == 255 ||
+            output_image[pixel_index - width + 1] == 255 ||
+            output_image[pixel_index + width - 1] == 255 ||
+            output_image[pixel_index + width + 1] == 255)
           output_image[pixel_index] = 255;
         else
           output_image[pixel_index] = 0;
