@@ -7,24 +7,26 @@
 #include <cmath>
 #include <iostream>
 
-int low_threshold = 30;
-int high_threshold = 90;
-
 using namespace std;
 
-void canny_edge_detect_wrapper(string, string);
+void canny_edge_detect_wrapper(string, string, int, int);
 
 int main(int argc, char **argv) {
   string input_image_path = argv[1];
   string output_image_path = argv[2];
-  canny_edge_detect_wrapper(input_image_path, output_image_path);
+  int low_threshold = stoi(argv[3]);
+  int high_threshold = stoi(argv[4]);
+  canny_edge_detect_wrapper(input_image_path, output_image_path, high_threshold,
+                            low_threshold);
   return 0;
 }
 
 void canny_edge_detect_wrapper(string input_image_path,
-                               string output_image_path) {
+                               string output_image_path, int high_threshold,
+                               int low_threshold) {
 
-  cv::Mat input_image = cv::imread(input_image_path, cv::ImreadModes::IMREAD_COLOR);
+  cv::Mat input_image =
+      cv::imread(input_image_path, cv::ImreadModes::IMREAD_COLOR);
   cv::Mat gray_image;
 
   cv::cvtColor(input_image, gray_image, cv::COLOR_BGR2GRAY);
@@ -36,7 +38,7 @@ void canny_edge_detect_wrapper(string input_image_path,
   canny_edge_detect(gray_image.data, height, width, high_threshold,
                     low_threshold, canny_image.data);
   double run_time = omp_get_wtime() - start_time;
-  cout << "run time: " << run_time * 1000 << "ms" << endl;
+  cout << run_time * 1000 <<  endl;
 
-  cv::imwrite(output_image_path + "canny.png", canny_image);
+  cv::imwrite(output_image_path + "cannyedge.jpg", canny_image);
 }
