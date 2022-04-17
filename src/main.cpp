@@ -14,7 +14,8 @@ int main(int argc, char **argv) {
   string output_image_path = argv[2];
   int low_threshold = stoi(argv[3]);
   int high_threshold = stoi(argv[4]);
-  cout << "dynamic: " << omp_get_dynamic() << " n_threads: " << omp_get_num_threads() << endl;
+  omp_set_dynamic(0);
+  // cout << "dynamic: " << omp_get_dynamic() << " n_threads: " << omp_get_max_threads() << endl;
   canny_edge_detect_wrapper(input_image_path, output_image_path, high_threshold,
                             low_threshold);
   return 0;
