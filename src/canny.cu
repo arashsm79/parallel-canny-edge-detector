@@ -35,6 +35,11 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
                        int high_threshold, int low_threshold,
                        uint8_t *output_image) {
 
+  cudaEvent_t start_time, stop_time;
+  cudaEventCreate(&start_time);
+  cudaEventCreate(&stop_time);
+  cudaEventRecord(start_time, 0);
+
   size_t image_size = height * width;
   size_t n_threads = 256;
   size_t n_blocks = ceil(image_size / n_threads);
@@ -73,17 +78,18 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   cout << "Launching gradient magnitide and direction kernel finished." << endl;
   checkCudaErrors(cudaFree(gaussian_blur_output));
 
-
-
-
   // Non-max Suppression
   double *nms_output;
   checkCudaErrors(
       cudaMalloc((void **)&nms_output, image_size * sizeof(double)));
-  checkCudaErrors(cudaMemcpy(nms_output, gradient_magnitude, image_size * sizeof(double), cudaMemcpyDeviceToDevice));
+  checkCudaErrors(cudaMemcpy(nms_output, gradient_magnitude,
+                             image_size * sizeof(double),
+                             cudaMemcpyDeviceToDevice));
   cout << "Launching non-max suppression kernel..." << endl;
-  non_max_suppression<<<n_blocks, n_threads>>>(gradient_magnitude, gradient_direction, height, width,
-                      nms_output);
+  non_max_suppression<<<n_blocks, n_threads>>>(
+      gradient_magnitude, gradient_direction, height, width, nms_output);
+  checkCudaErrors(cudaPeekAtLastError());
+  checkCudaErrors(cudaDeviceSynchronize());
   cout << "Launching non-max suppression kernel finished." << endl;
   double *nms_output_h = new double[image_size];
   checkCudaErrors(cudaMemcpy(nms_output_h, nms_output,
@@ -92,18 +98,36 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   checkCudaErrors(cudaFree(gradient_magnitude));
   checkCudaErrors(cudaFree(gradient_direction));
 
-
-
-  uint8_t *double_thresh_output = new uint8_t[image_size];
-
   // Thresholding
-  thresholding(nms_output_h, height, width, high_threshold, low_threshold,
-               double_thresh_output);
+  uint8_t *double_thresh_output;
+  checkCudaErrors(
+      cudaMalloc((void **)&double_thresh_output, image_size * sizeof(uint8_t)));
+  cout << "Launching non-max suppression kernel..." << endl;
+  thresholding<<<n_blocks, n_threads>>>(nms_output, height, width,
+                                        high_threshold, low_threshold,
+                                        double_thresh_output);
+  checkCudaErrors(cudaPeekAtLastError());
+  checkCudaErrors(cudaDeviceSynchronize());
+  cout << "Launching non-max suppression kernel finished." << endl;
+  uint8_t *double_thresh_output_h = new uint8_t[image_size];
+  checkCudaErrors(cudaMemcpy(double_thresh_output_h, double_thresh_output,
+                             image_size * sizeof(uint8_t),
+                             cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaFree(nms_output));
+  checkCudaErrors(cudaFree(double_thresh_output));
 
   // Hystresis
-  hysteresis(double_thresh_output, height, width, output_image);
+  hysteresis(double_thresh_output_h, height, width, output_image);
 
-  delete[] double_thresh_output;
+  delete[] double_thresh_output_h;
+
+  cudaEventRecord(stop_time, 0); // end timer
+  cudaEventSynchronize(stop_time);
+  float delta = 0;
+  cudaEventElapsedTime(&delta, start_time, stop_time);
+  cudaEventDestroy(start_time);
+  cudaEventDestroy(stop_time);
+  printf("%lf\n", delta);
 }
 
 __global__ void gaussian_blur(const uint8_t *input_image, int height, int width,
@@ -194,8 +218,8 @@ __global__ void gradient_magnitude_direction(const uint8_t *input_image,
   direction[pixel_index] = (uint8_t)pixel_direction;
 }
 __global__ void non_max_suppression(double *gradient_magnitude,
-                         uint8_t *gradient_direction, int height, int width,
-                         double *output_image) {
+                                    uint8_t *gradient_direction, int height,
+                                    int width, double *output_image) {
   int pixel_id = blockIdx.x * blockDim.x + threadIdx.x;
 
   // if pixel is out of bounds don't do anything
@@ -251,25 +275,29 @@ __global__ void non_max_suppression(double *gradient_magnitude,
     break;
   }
 }
-void thresholding(double *suppressed_image, int height, int width,
-                  int high_threshold, int low_threshold,
-                  uint8_t *output_image) {
-  for (int col = 0; col < width; col++) {
-    for (int row = 0; row < height; row++) {
-      int pixel_index = col + (row * width);
-      if (suppressed_image[pixel_index] > high_threshold)
-        output_image[pixel_index] = 255; // Strong edge
-      else if (suppressed_image[pixel_index] > low_threshold)
-        output_image[pixel_index] = 100; // Weak edge
-      else
-        output_image[pixel_index] = 0; // Not an edge
-    }
-  }
+
+__global__ void thresholding(double *suppressed_image, int height, int width,
+                             int high_threshold, int low_threshold,
+                             uint8_t *output_image) {
+  int pixel_index = blockIdx.x * blockDim.x + threadIdx.x;
+  // if pixel is out of bounds don't do anything
+  if (pixel_index < 0 || pixel_index >= height * width)
+    return;
+
+  if (suppressed_image[pixel_index] > high_threshold)
+    output_image[pixel_index] = 255; // Strong edge
+  else if (suppressed_image[pixel_index] > low_threshold)
+    output_image[pixel_index] = 100; // Weak edge
+  else
+    output_image[pixel_index] = 0; // Not an edge
 }
 
 void hysteresis(uint8_t *input_image, int height, int width,
                 uint8_t *output_image) {
   memcpy(output_image, input_image, width * height * sizeof(uint8_t));
+  // For better results hystresis has to work on a single image.
+  // here we only read and write to output_image. Thus, it can't
+  // be efficiently parallelized.
   for (int col = OFFSET; col < width - OFFSET; col++) {
     for (int row = OFFSET; row < height - OFFSET; row++) {
       int pixel_index = col + (row * width);
