@@ -28,6 +28,8 @@ void check(T result, char const *const func, const char *const file,
 using namespace std;
 __device__ __constant__ double gaussian_kernel[9] = {1, 2, 1, 2, 4, 2, 1, 2, 1};
 __device__ __constant__ int gaussian_kernel_sum = 16;
+__device__ __constant__ int8_t Gx[9] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
+__device__ __constant__ int8_t Gy[9] = {1, 2, 1, 0, 0, 0, -1, -2, -1};
 
 void canny_edge_detect(const uint8_t *input_image, int height, int width,
                        int high_threshold, int low_threshold,
@@ -37,11 +39,12 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   size_t n_threads = 256;
   size_t n_blocks = ceil(image_size / n_threads);
 
-  double *gradient_magnitude = new double[image_size];
-  uint8_t *gradient_direction = new uint8_t[image_size];
   double *nms_output = new double[image_size];
   uint8_t *double_thresh_output = new uint8_t[image_size];
 
+
+
+  // Gaussian Blur
   uint8_t *gaussian_blur_input;
   uint8_t *gaussian_blur_output;
   checkCudaErrors(
@@ -51,37 +54,62 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   checkCudaErrors(cudaMemcpy(gaussian_blur_input, input_image,
                              image_size * sizeof(uint8_t),
                              cudaMemcpyHostToDevice));
-
   cout << "Launching gaussian blur kernel..." << endl;
   gaussian_blur<<<n_blocks, n_threads>>>(gaussian_blur_input, height, width,
                                          gaussian_blur_output);
   checkCudaErrors(cudaPeekAtLastError());
   checkCudaErrors(cudaDeviceSynchronize());
   cout << "Launching gaussian blur kernel finished." << endl;
+  checkCudaErrors(cudaFree(gaussian_blur_input));
 
-  uint8_t *gaussian_blur_output_h = new uint8_t[image_size];
-  checkCudaErrors(cudaMemcpy(gaussian_blur_output_h, gaussian_blur_output,
+
+
+
+  // Gradient Magnitude and Direction
+  double *gradient_magnitude;
+  uint8_t *gradient_direction;
+  checkCudaErrors(
+      cudaMalloc((void **)&gradient_magnitude, image_size * sizeof(double)));
+  checkCudaErrors(
+      cudaMalloc((void **)&gradient_direction, image_size * sizeof(uint8_t)));
+  cout << "Launching gradient magnitide and direction kernel..." << endl;
+  gradient_magnitude_direction<<<n_blocks, n_threads>>>(
+      gaussian_blur_output, height, width, gradient_magnitude,
+      gradient_direction);
+  checkCudaErrors(cudaPeekAtLastError());
+  checkCudaErrors(cudaDeviceSynchronize());
+  cout << "Launching gradient magnitide and direction kernel finished." << endl;
+  double *gradient_magnitude_h = new double[image_size];
+  uint8_t *gradient_direction_h = new uint8_t[image_size];
+  checkCudaErrors(cudaMemcpy(gradient_magnitude_h, gradient_magnitude,
+                             image_size * sizeof(double),
+                             cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(gradient_direction_h, gradient_direction,
                              image_size * sizeof(uint8_t),
                              cudaMemcpyDeviceToHost));
-  checkCudaErrors(cudaFree(gaussian_blur_input));
   checkCudaErrors(cudaFree(gaussian_blur_output));
 
-  cout << "Launching gradient magnitide and direction kernel..." << endl;
-  gradient_magnitude_direction(gaussian_blur_output_h, height, width,
-                               gradient_magnitude, gradient_direction);
-  cout << "Launching gradient magnitide and direction kernel finished." << endl;
 
+
+
+  // Non-max Suppression
   cout << "Launching non max suppression kernel..." << endl;
-  non_max_suppression(gradient_magnitude, gradient_direction, height, width,
+  non_max_suppression(gradient_magnitude_h, gradient_direction_h, height, width,
                       nms_output);
   cout << "Launching non max suppression kernel finished." << endl;
 
+  checkCudaErrors(cudaFree(gradient_magnitude));
+  checkCudaErrors(cudaFree(gradient_direction));
+
+
+
+  // Thresholding
   thresholding(nms_output, height, width, high_threshold, low_threshold,
                double_thresh_output);
+
+  // Hystresis
   hysteresis(double_thresh_output, height, width, output_image);
 
-  delete[] gradient_magnitude;
-  delete[] gradient_direction;
   delete[] nms_output;
   delete[] double_thresh_output;
 }
@@ -115,57 +143,63 @@ __global__ void gaussian_blur(const uint8_t *input_image, int height, int width,
   output_image[pixel_id] = (uint8_t)(output_intensity / gaussian_kernel_sum);
 }
 
-void gradient_magnitude_direction(const uint8_t *input_image, int height,
-                                  int width, double *magnitude,
-                                  uint8_t *direction) {
-  const int8_t Gx[] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
-  const int8_t Gy[] = {1, 2, 1, 0, 0, 0, -1, -2, -1};
+__global__ void gradient_magnitude_direction(const uint8_t *input_image,
+                                             int height, int width,
+                                             double *magnitude,
+                                             uint8_t *direction) {
+  int pixel_id = blockIdx.x * blockDim.x + threadIdx.x;
 
-  for (int col = OFFSET; col < width - OFFSET; col++) {
-    for (int row = OFFSET; row < height - OFFSET; row++) {
-      double grad_x_sum = 0.0;
-      double grad_y_sum = 0.0;
-      int kernel_index = 0;
-      int pixel_index = col + (row * width);
+  // if pixel is out of bounds don't do anything
+  if (pixel_id < 0 || pixel_id >= height * width)
+    return;
 
-      for (int krow = -OFFSET; krow <= OFFSET; krow++) {
-        for (int kcol = -OFFSET; kcol <= OFFSET; kcol++) {
-          grad_x_sum += input_image[pixel_index + (kcol + (krow * width))] *
-                        Gx[kernel_index];
-          grad_y_sum += input_image[pixel_index + (kcol + (krow * width))] *
-                        Gy[kernel_index];
-          kernel_index++;
-        }
-      }
+  // calculate the row and col of this pixel in the image
+  int row = pixel_id / width;
+  int col = pixel_id % width;
+  // if pixel is outside the given offset don't do anything
+  if (col < OFFSET || col >= width - OFFSET || row < OFFSET ||
+      row >= height - OFFSET)
+    return;
 
-      int pixel_direction = 0;
+  double grad_x_sum = 0.0;
+  double grad_y_sum = 0.0;
+  int kernel_index = 0;
+  int pixel_index = col + (row * width);
 
-      if (grad_x_sum == 0.0 || grad_y_sum == 0.0) {
-        magnitude[pixel_index] = 0;
-      } else {
-        magnitude[pixel_index] = ((
-            std::sqrt((grad_x_sum * grad_x_sum) + (grad_y_sum * grad_y_sum))));
-        double theta = std::atan2(grad_y_sum, grad_x_sum);
-        theta = theta * (360.0 / (2.0 * M_PI));
-
-        if ((theta <= 22.5 && theta >= -22.5) || (theta <= -157.5) ||
-            (theta >= 157.5))
-          pixel_direction = 1; // horizontal -
-        else if ((theta > 22.5 && theta <= 67.5) ||
-                 (theta > -157.5 && theta <= -112.5))
-          pixel_direction = 2; // north-east -> south-west/
-        else if ((theta > 67.5 && theta <= 112.5) ||
-                 (theta >= -112.5 && theta < -67.5))
-          pixel_direction = 3; // vertical |
-        else if ((theta >= -67.5 && theta < -22.5) ||
-                 (theta > 112.5 && theta < 157.5))
-          pixel_direction = 4; // north-west -> south-east \'
-        else
-          std::cout << "Wrong direction: " << theta << std::endl;
-      }
-      direction[pixel_index] = (uint8_t)pixel_direction;
+  for (int krow = -OFFSET; krow <= OFFSET; krow++) {
+    for (int kcol = -OFFSET; kcol <= OFFSET; kcol++) {
+      grad_x_sum +=
+          input_image[pixel_index + (kcol + (krow * width))] * Gx[kernel_index];
+      grad_y_sum +=
+          input_image[pixel_index + (kcol + (krow * width))] * Gy[kernel_index];
+      kernel_index++;
     }
   }
+
+  int pixel_direction = 0;
+
+  if (grad_x_sum == 0.0 || grad_y_sum == 0.0) {
+    magnitude[pixel_index] = 0;
+  } else {
+    magnitude[pixel_index] =
+        ((std::sqrt((grad_x_sum * grad_x_sum) + (grad_y_sum * grad_y_sum))));
+    double theta = std::atan2(grad_y_sum, grad_x_sum);
+    theta = theta * (360.0 / (2.0 * M_PI));
+
+    if ((theta <= 22.5 && theta >= -22.5) || (theta <= -157.5) ||
+        (theta >= 157.5))
+      pixel_direction = 1; // horizontal -
+    else if ((theta > 22.5 && theta <= 67.5) ||
+             (theta > -157.5 && theta <= -112.5))
+      pixel_direction = 2; // north-east -> south-west/
+    else if ((theta > 67.5 && theta <= 112.5) ||
+             (theta >= -112.5 && theta < -67.5))
+      pixel_direction = 3; // vertical |
+    else if ((theta >= -67.5 && theta < -22.5) ||
+             (theta > 112.5 && theta < 157.5))
+      pixel_direction = 4; // north-west -> south-east \'
+  }
+  direction[pixel_index] = (uint8_t)pixel_direction;
 }
 void non_max_suppression(double *gradient_magnitude,
                          uint8_t *gradient_direction, int height, int width,
