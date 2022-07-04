@@ -1,62 +1,118 @@
 #include "canny.h"
+#include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <cuda_device_runtime_api.h>
+#include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
+#include <device_launch_parameters.h>
+#include <driver_types.h>
 #include <iostream>
 #include <math.h>
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
+
+// Easier error handling
+static const char *_cudaGetErrorEnum(cudaError_t error) {
+  return cudaGetErrorName(error);
+}
+template <typename T>
+void check(T result, char const *const func, const char *const file,
+           int const line) {
+  if (result) {
+    fprintf(stderr, "CUDA error at %s:%d code=%d(%s) \"%s\" \n", file, line,
+            static_cast<unsigned int>(result), _cudaGetErrorEnum(result), func);
+    exit(EXIT_FAILURE);
+  }
+}
+#define checkCudaErrors(val) check((val), #val, __FILE__, __LINE__)
 
 using namespace std;
+__device__ __constant__ double gaussian_kernel[9] = {1, 2, 1, 2, 4, 2, 1, 2, 1};
+__device__ __constant__ int gaussian_kernel_sum = 16;
 
 void canny_edge_detect(const uint8_t *input_image, int height, int width,
                        int high_threshold, int low_threshold,
                        uint8_t *output_image) {
 
-  uint64_t image_size = height * width;
+  size_t image_size = height * width;
+  size_t n_threads = 256;
+  size_t n_blocks = ceil(image_size / n_threads);
 
-  uint8_t *gaussian_blur_output = new uint8_t[image_size];
   double *gradient_magnitude = new double[image_size];
   uint8_t *gradient_direction = new uint8_t[image_size];
   double *nms_output = new double[image_size];
   uint8_t *double_thresh_output = new uint8_t[image_size];
 
-  gaussian_blur(input_image, height, width, gaussian_blur_output);
-  gradient_magnitude_direction(gaussian_blur_output, height, width,
+  uint8_t *gaussian_blur_input;
+  uint8_t *gaussian_blur_output;
+  checkCudaErrors(
+      cudaMalloc((void **)&gaussian_blur_input, image_size * sizeof(uint8_t)));
+  checkCudaErrors(
+      cudaMalloc((void **)&gaussian_blur_output, image_size * sizeof(uint8_t)));
+  checkCudaErrors(cudaMemcpy(gaussian_blur_input, input_image,
+                             image_size * sizeof(uint8_t),
+                             cudaMemcpyHostToDevice));
+
+  cout << "Launching gaussian blur kernel..." << endl;
+  gaussian_blur<<<n_blocks, n_threads>>>(gaussian_blur_input, height, width,
+                                         gaussian_blur_output);
+  checkCudaErrors(cudaPeekAtLastError());
+  checkCudaErrors(cudaDeviceSynchronize());
+  cout << "Launching gaussian blur kernel finished." << endl;
+
+  uint8_t *gaussian_blur_output_h = new uint8_t[image_size];
+  checkCudaErrors(cudaMemcpy(gaussian_blur_output_h, gaussian_blur_output,
+                             image_size * sizeof(uint8_t),
+                             cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaFree(gaussian_blur_input));
+  checkCudaErrors(cudaFree(gaussian_blur_output));
+
+  cout << "Launching gradient magnitide and direction kernel..." << endl;
+  gradient_magnitude_direction(gaussian_blur_output_h, height, width,
                                gradient_magnitude, gradient_direction);
+  cout << "Launching gradient magnitide and direction kernel finished." << endl;
+
+  cout << "Launching non max suppression kernel..." << endl;
   non_max_suppression(gradient_magnitude, gradient_direction, height, width,
                       nms_output);
+  cout << "Launching non max suppression kernel finished." << endl;
+
   thresholding(nms_output, height, width, high_threshold, low_threshold,
                double_thresh_output);
   hysteresis(double_thresh_output, height, width, output_image);
 
-  delete[] gaussian_blur_output;
   delete[] gradient_magnitude;
   delete[] gradient_direction;
   delete[] nms_output;
   delete[] double_thresh_output;
 }
 
-void gaussian_blur(const uint8_t *input_image, int height, int width,
-                   uint8_t *output_image) {
+__global__ void gaussian_blur(const uint8_t *input_image, int height, int width,
+                              uint8_t *output_image) {
+  int pixel_id = blockIdx.x * blockDim.x + threadIdx.x;
 
-  const double kernel[9] = {1, 2, 1, 2, 4, 2, 1, 2, 1};
-  const int kernel_sum = 16;
+  // if pixel is out of bounds don't do anything
+  if (pixel_id < 0 || pixel_id >= height * width)
+    return;
 
-  for (int col = OFFSET; col < width - OFFSET; col++) {
-    for (int row = OFFSET; row < height - OFFSET; row++) {
-      double output_intensity = 0;
-      int kernel_index = 0;
-      int pixel_index = col + (row * width);
-      for (int krow = -OFFSET; krow <= OFFSET; krow++) {
-        for (int kcol = -OFFSET; kcol <= OFFSET; kcol++) {
-          output_intensity +=
-              input_image[pixel_index + (kcol + (krow * width))] *
-              kernel[kernel_index];
-          kernel_index++;
-        }
-      }
-      output_image[pixel_index] = (uint8_t)(output_intensity / kernel_sum);
+  // calculate the row and col of this pixel in the image
+  int row = pixel_id / width;
+  int col = pixel_id % width;
+  // if pixel is outside the given offset don't do anything
+  if (col < OFFSET || col >= width - OFFSET || row < OFFSET ||
+      row >= height - OFFSET)
+    return;
+
+  double output_intensity = 0;
+  int kernel_index = 0;
+  size_t pixel_index = col + (row * width);
+  for (int krow = -OFFSET; krow <= OFFSET; krow++) {
+    for (int kcol = -OFFSET; kcol <= OFFSET; kcol++) {
+      output_intensity += input_image[pixel_index + (kcol + (krow * width))] *
+                          gaussian_kernel[kernel_index];
+      kernel_index++;
     }
   }
+  output_image[pixel_id] = (uint8_t)(output_intensity / gaussian_kernel_sum);
 }
 
 void gradient_magnitude_direction(const uint8_t *input_image, int height,
@@ -120,7 +176,8 @@ void non_max_suppression(double *gradient_magnitude,
       int pixel_index = col + (row * width);
 
       // unconditionally suppress border pixels
-      if(row == OFFSET || col == OFFSET || col == width - OFFSET - 1 || row == height - OFFSET - 1) {
+      if (row == OFFSET || col == OFFSET || col == width - OFFSET - 1 ||
+          row == height - OFFSET - 1) {
         output_image[pixel_index] = 0;
         continue;
       }
