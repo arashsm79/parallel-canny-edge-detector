@@ -54,12 +54,12 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   checkCudaErrors(cudaMemcpy(gaussian_blur_input, input_image,
                              image_size * sizeof(uint8_t),
                              cudaMemcpyHostToDevice));
-  cout << "Launching gaussian blur kernel..." << endl;
+  // cout << "Launching gaussian blur kernel..." << endl;
   gaussian_blur<<<n_blocks, n_threads>>>(gaussian_blur_input, height, width,
                                          gaussian_blur_output);
   checkCudaErrors(cudaPeekAtLastError());
   checkCudaErrors(cudaDeviceSynchronize());
-  cout << "Launching gaussian blur kernel finished." << endl;
+  // cout << "Launching gaussian blur kernel finished." << endl;
   checkCudaErrors(cudaFree(gaussian_blur_input));
 
   // Gradient Magnitude and Direction
@@ -69,13 +69,13 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
       cudaMalloc((void **)&gradient_magnitude, image_size * sizeof(double)));
   checkCudaErrors(
       cudaMalloc((void **)&gradient_direction, image_size * sizeof(uint8_t)));
-  cout << "Launching gradient magnitide and direction kernel..." << endl;
+  // cout << "Launching gradient magnitide and direction kernel..." << endl;
   gradient_magnitude_direction<<<n_blocks, n_threads>>>(
       gaussian_blur_output, height, width, gradient_magnitude,
       gradient_direction);
   checkCudaErrors(cudaPeekAtLastError());
   checkCudaErrors(cudaDeviceSynchronize());
-  cout << "Launching gradient magnitide and direction kernel finished." << endl;
+  // cout << "Launching gradient magnitide and direction kernel finished." << endl;
   checkCudaErrors(cudaFree(gaussian_blur_output));
 
   // Non-max Suppression
@@ -85,12 +85,12 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   checkCudaErrors(cudaMemcpy(nms_output, gradient_magnitude,
                              image_size * sizeof(double),
                              cudaMemcpyDeviceToDevice));
-  cout << "Launching non-max suppression kernel..." << endl;
+  // cout << "Launching non-max suppression kernel..." << endl;
   non_max_suppression<<<n_blocks, n_threads>>>(
       gradient_magnitude, gradient_direction, height, width, nms_output);
   checkCudaErrors(cudaPeekAtLastError());
   checkCudaErrors(cudaDeviceSynchronize());
-  cout << "Launching non-max suppression kernel finished." << endl;
+  // cout << "Launching non-max suppression kernel finished." << endl;
   double *nms_output_h = new double[image_size];
   checkCudaErrors(cudaMemcpy(nms_output_h, nms_output,
                              image_size * sizeof(double),
@@ -102,13 +102,13 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   uint8_t *double_thresh_output;
   checkCudaErrors(
       cudaMalloc((void **)&double_thresh_output, image_size * sizeof(uint8_t)));
-  cout << "Launching non-max suppression kernel..." << endl;
+  // cout << "Launching non-max suppression kernel..." << endl;
   thresholding<<<n_blocks, n_threads>>>(nms_output, height, width,
                                         high_threshold, low_threshold,
                                         double_thresh_output);
   checkCudaErrors(cudaPeekAtLastError());
   checkCudaErrors(cudaDeviceSynchronize());
-  cout << "Launching non-max suppression kernel finished." << endl;
+  // cout << "Launching non-max suppression kernel finished." << endl;
   uint8_t *double_thresh_output_h = new uint8_t[image_size];
   checkCudaErrors(cudaMemcpy(double_thresh_output_h, double_thresh_output,
                              image_size * sizeof(uint8_t),
