@@ -39,11 +39,6 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   size_t n_threads = 256;
   size_t n_blocks = ceil(image_size / n_threads);
 
-  double *nms_output = new double[image_size];
-  uint8_t *double_thresh_output = new uint8_t[image_size];
-
-
-
   // Gaussian Blur
   uint8_t *gaussian_blur_input;
   uint8_t *gaussian_blur_output;
@@ -62,9 +57,6 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   cout << "Launching gaussian blur kernel finished." << endl;
   checkCudaErrors(cudaFree(gaussian_blur_input));
 
-
-
-
   // Gradient Magnitude and Direction
   double *gradient_magnitude;
   uint8_t *gradient_direction;
@@ -79,38 +71,38 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
   checkCudaErrors(cudaPeekAtLastError());
   checkCudaErrors(cudaDeviceSynchronize());
   cout << "Launching gradient magnitide and direction kernel finished." << endl;
-  double *gradient_magnitude_h = new double[image_size];
-  uint8_t *gradient_direction_h = new uint8_t[image_size];
-  checkCudaErrors(cudaMemcpy(gradient_magnitude_h, gradient_magnitude,
-                             image_size * sizeof(double),
-                             cudaMemcpyDeviceToHost));
-  checkCudaErrors(cudaMemcpy(gradient_direction_h, gradient_direction,
-                             image_size * sizeof(uint8_t),
-                             cudaMemcpyDeviceToHost));
   checkCudaErrors(cudaFree(gaussian_blur_output));
 
 
 
 
   // Non-max Suppression
-  cout << "Launching non max suppression kernel..." << endl;
-  non_max_suppression(gradient_magnitude_h, gradient_direction_h, height, width,
+  double *nms_output;
+  checkCudaErrors(
+      cudaMalloc((void **)&nms_output, image_size * sizeof(double)));
+  checkCudaErrors(cudaMemcpy(nms_output, gradient_magnitude, image_size * sizeof(double), cudaMemcpyDeviceToDevice));
+  cout << "Launching non-max suppression kernel..." << endl;
+  non_max_suppression<<<n_blocks, n_threads>>>(gradient_magnitude, gradient_direction, height, width,
                       nms_output);
-  cout << "Launching non max suppression kernel finished." << endl;
-
+  cout << "Launching non-max suppression kernel finished." << endl;
+  double *nms_output_h = new double[image_size];
+  checkCudaErrors(cudaMemcpy(nms_output_h, nms_output,
+                             image_size * sizeof(double),
+                             cudaMemcpyDeviceToHost));
   checkCudaErrors(cudaFree(gradient_magnitude));
   checkCudaErrors(cudaFree(gradient_direction));
 
 
 
+  uint8_t *double_thresh_output = new uint8_t[image_size];
+
   // Thresholding
-  thresholding(nms_output, height, width, high_threshold, low_threshold,
+  thresholding(nms_output_h, height, width, high_threshold, low_threshold,
                double_thresh_output);
 
   // Hystresis
   hysteresis(double_thresh_output, height, width, output_image);
 
-  delete[] nms_output;
   delete[] double_thresh_output;
 }
 
@@ -201,55 +193,62 @@ __global__ void gradient_magnitude_direction(const uint8_t *input_image,
   }
   direction[pixel_index] = (uint8_t)pixel_direction;
 }
-void non_max_suppression(double *gradient_magnitude,
+__global__ void non_max_suppression(double *gradient_magnitude,
                          uint8_t *gradient_direction, int height, int width,
                          double *output_image) {
-  memcpy(output_image, gradient_magnitude, width * height * sizeof(double));
-  for (int col = OFFSET; col < width - OFFSET; col++) {
-    for (int row = OFFSET; row < height - OFFSET; row++) {
-      int pixel_index = col + (row * width);
+  int pixel_id = blockIdx.x * blockDim.x + threadIdx.x;
 
-      // unconditionally suppress border pixels
-      if (row == OFFSET || col == OFFSET || col == width - OFFSET - 1 ||
-          row == height - OFFSET - 1) {
-        output_image[pixel_index] = 0;
-        continue;
-      }
+  // if pixel is out of bounds don't do anything
+  if (pixel_id < 0 || pixel_id >= height * width)
+    return;
 
-      switch (gradient_direction[pixel_index]) {
-      case 1:
-        if (gradient_magnitude[pixel_index - 1] >=
-                gradient_magnitude[pixel_index] ||
-            gradient_magnitude[pixel_index + 1] >
-                gradient_magnitude[pixel_index])
-          output_image[pixel_index] = 0;
-        break;
-      case 2:
-        if (gradient_magnitude[pixel_index - (width - 1)] >=
-                gradient_magnitude[pixel_index] ||
-            gradient_magnitude[pixel_index + (width - 1)] >
-                gradient_magnitude[pixel_index])
-          output_image[pixel_index] = 0;
-        break;
-      case 3:
-        if (gradient_magnitude[pixel_index - (width)] >=
-                gradient_magnitude[pixel_index] ||
-            gradient_magnitude[pixel_index + (width)] >
-                gradient_magnitude[pixel_index])
-          output_image[pixel_index] = 0;
-        break;
-      case 4:
-        if (gradient_magnitude[pixel_index - (width + 1)] >=
-                gradient_magnitude[pixel_index] ||
-            gradient_magnitude[pixel_index + (width + 1)] >
-                gradient_magnitude[pixel_index])
-          output_image[pixel_index] = 0;
-        break;
-      default:
-        output_image[pixel_index] = 0;
-        break;
-      }
-    }
+  // calculate the row and col of this pixel in the image
+  int row = pixel_id / width;
+  int col = pixel_id % width;
+  // if pixel is outside the given offset don't do anything
+  if (col < OFFSET || col >= width - OFFSET || row < OFFSET ||
+      row >= height - OFFSET)
+    return;
+  int pixel_index = col + (row * width);
+
+  // unconditionally suppress border pixels
+  if (row == OFFSET || col == OFFSET || col == width - OFFSET - 1 ||
+      row == height - OFFSET - 1) {
+    output_image[pixel_index] = 0;
+    return;
+  }
+
+  switch (gradient_direction[pixel_index]) {
+  case 1:
+    if (gradient_magnitude[pixel_index - 1] >=
+            gradient_magnitude[pixel_index] ||
+        gradient_magnitude[pixel_index + 1] > gradient_magnitude[pixel_index])
+      output_image[pixel_index] = 0;
+    break;
+  case 2:
+    if (gradient_magnitude[pixel_index - (width - 1)] >=
+            gradient_magnitude[pixel_index] ||
+        gradient_magnitude[pixel_index + (width - 1)] >
+            gradient_magnitude[pixel_index])
+      output_image[pixel_index] = 0;
+    break;
+  case 3:
+    if (gradient_magnitude[pixel_index - (width)] >=
+            gradient_magnitude[pixel_index] ||
+        gradient_magnitude[pixel_index + (width)] >
+            gradient_magnitude[pixel_index])
+      output_image[pixel_index] = 0;
+    break;
+  case 4:
+    if (gradient_magnitude[pixel_index - (width + 1)] >=
+            gradient_magnitude[pixel_index] ||
+        gradient_magnitude[pixel_index + (width + 1)] >
+            gradient_magnitude[pixel_index])
+      output_image[pixel_index] = 0;
+    break;
+  default:
+    output_image[pixel_index] = 0;
+    break;
   }
 }
 void thresholding(double *suppressed_image, int height, int width,
