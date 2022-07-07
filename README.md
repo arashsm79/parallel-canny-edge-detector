@@ -59,6 +59,8 @@ Example:
 ./src/Main ../input/1280x720.jpg ../output/1280x720.jpg 30 90
 ```
 # Results
+Tables and charts are available in [this PDF file](https://github.com/arashsm79/parallel-canny-edge-detector/blob/main/results/arashsm79-parallel-canny-edge-detector-results.pdf).
+
 Using OpenMP and its directives, we achieved speedups up to 4. This speed was gained without much tinkering with the code. All we did was add some directives to the serial implementation.
 
 On the specified hardware, 8 threads on average, seem to be the optimal number of threads. The number 8 corresponds to the number of CPU cores on the specified hardware.
