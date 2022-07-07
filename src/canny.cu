@@ -121,7 +121,7 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
 
   delete[] double_thresh_output_h;
 
-  cudaEventRecord(stop_time, 0); // end timer
+  cudaEventRecord(stop_time, 0);
   cudaEventSynchronize(stop_time);
   float delta = 0;
   cudaEventElapsedTime(&delta, start_time, stop_time);
@@ -133,11 +133,6 @@ void canny_edge_detect(const uint8_t *input_image, int height, int width,
 __global__ void gaussian_blur(const uint8_t *input_image, int height, int width,
                               uint8_t *output_image) {
   int pixel_id = blockIdx.x * blockDim.x + threadIdx.x;
-
-  // if pixel is out of bounds don't do anything
-  if (pixel_id < 0 || pixel_id >= height * width)
-    return;
-
   // calculate the row and col of this pixel in the image
   int row = pixel_id / width;
   int col = pixel_id % width;
@@ -164,11 +159,6 @@ __global__ void gradient_magnitude_direction(const uint8_t *input_image,
                                              double *magnitude,
                                              uint8_t *direction) {
   int pixel_id = blockIdx.x * blockDim.x + threadIdx.x;
-
-  // if pixel is out of bounds don't do anything
-  if (pixel_id < 0 || pixel_id >= height * width)
-    return;
-
   // calculate the row and col of this pixel in the image
   int row = pixel_id / width;
   int col = pixel_id % width;
@@ -221,11 +211,6 @@ __global__ void non_max_suppression(double *gradient_magnitude,
                                     uint8_t *gradient_direction, int height,
                                     int width, double *output_image) {
   int pixel_id = blockIdx.x * blockDim.x + threadIdx.x;
-
-  // if pixel is out of bounds don't do anything
-  if (pixel_id < 0 || pixel_id >= height * width)
-    return;
-
   // calculate the row and col of this pixel in the image
   int row = pixel_id / width;
   int col = pixel_id % width;
