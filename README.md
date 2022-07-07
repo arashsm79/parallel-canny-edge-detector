@@ -72,5 +72,5 @@ The small VRAM on the GPU caused some problems when trying to allocate memory fo
 ![example output](/output/1920x1080.jpg "Example Output")
 
 ---
-#References
-[1] https://en.wikipedia.org/wiki/Canny_edge_detector
+# References
+* [1] https://en.wikipedia.org/wiki/Canny_edge_detector
