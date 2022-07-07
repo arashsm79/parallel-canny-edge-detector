@@ -5,7 +5,6 @@
 * [Serial](#Serial)
 * [OpenMP](#OpenMP)
 * [CUDA](#CUDA)
-* [Results](#Results)
 * [Building](#Building)
 * [Usage](#Usage)
 * [Results](#Results)
