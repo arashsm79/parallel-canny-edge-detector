@@ -1,0 +1,5 @@
+.ccls-cache
+.cache
+.nix
+build
+input-output-tests
