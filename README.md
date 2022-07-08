@@ -23,7 +23,6 @@ The process of Canny edge detection algorithm can be broken down to five differe
 
 you can read more about the algorithm in [this wikipedia article](https://en.wikipedia.org/wiki/Canny_edge_detector).
 
-
 # Serial
 The serial implementation is available in the [serial](https://github.com/arashsm79/parallel-canny-edge-detector/tree/serial) branch.
 
